@@ -2,7 +2,7 @@
 
 Studio Cloud Sync is a Python script designed to simplify the management of .lua files from Roblox Studio within your local environment using the Roblox Engine Open Cloud APIs. With Studio Cloud Sync, developers can seamlessly synchronize their local workspace with the cloud, enabling efficient version control and collaboration on Roblox experiences.
 
-![Example Screenshot](/images/example.png)
+![Example Screenshot](/readme_images/example.png)
 
 ## Getting Started
 
@@ -14,16 +14,102 @@ Studio Cloud Sync is a Python script designed to simplify the management of .lua
 ### Setup
 
 1. **Clone Repository**: Clone the Studio Cloud Sync repository to your local machine.
+- Ensure you have cloned the Studio Cloud Sync repository to your local machine.
+- Obtain your API key from Roblox following the instructions in the [Roblox documentation](https://create.roblox.com/docs/cloud/open-cloud/instance).
 
-2. **Configuration**: Create a `.env` file in the root directory and add your API key obtained from Roblox as per the instructions in the [Roblox documentation](https://create.roblox.com/docs/cloud/open-cloud/instance). Configure the `scs_config.json` file with your universe ID, place ID, and version control name whitelist. It should end up looking something like:
+### Step 1: Creating the `.env` File
+
+1. In the root directory of your Studio Cloud Sync project, create a file named `.env`. This file will store your environment-specific settings such as your API key, Roblox universe ID, and place ID.
+
+2. Use the `.env.template` as a reference to add the following entries to your `.env` file:
+
+   ```
+   API_KEY="your_roblox_api_key_here"
+   UNIVERSE_ID="your_universe_id_here"
+   PLACE_ID="your_place_id_here"
+   WHITELIST=["ServerScriptService", "StarterPlayer", "StarterGui"]
+   ```
+
+   Replace the placeholder values with your actual Roblox API key, Universe ID, and Place ID. Adjust the `WHITELIST` array to include the names of objects you want to manage with version control.
+
+### Step 2: Preventing `.env` Leaks with `.gitignore`
+
+To ensure your `.env` file, containing sensitive information, is not accidentally committed to a version control system (like Git):
+
+1. Open or create a `.gitignore` file in the root directory of your project.
+
+2. Add the following line to the `.gitignore` file:
+
+   ```
+   .env
+   ```
+
+This will instruct Git to ignore your `.env` file, preventing it from being included in your repository.
+
+### Step 3: Sharing `.env` Configurations Securely
+
+While the `.env` file should not be committed to version control, you may need to share these configurations with your colleagues to ensure a consistent development environment:
+
+1. **Create a Shared Configuration Template**: Make a copy of your `.env` file, naming it `.env.example` or `.env.template`, removing or obfuscating any sensitive values. This template can include comments or instructions on how to obtain the necessary values.
+
+2. **Use Secure Sharing Methods**: Share the template directly with your colleagues through secure channels, such as encrypted emails, secure file transfers, or a private documentation space. Avoid using public channels or unencrypted communication.
+
+3. **Environment-specific Configurations**: If your project requires different configurations for development, testing, and production environments, consider creating separate template files for each, like `.env.development.example`, `.env.test.example`, and `.env.production.example`.
+
+### **Configuration**: 
+
+Incorporating an automated setup step for generating configuration files from the `.env` settings can streamline the initialization process of your Studio Cloud Sync (SCS) environment. This functionality can be particularly useful for onboarding new team members or setting up the project on different machines. Below is a guide that you can include in your README to explain this process:
+
+## Automated Configuration Setup
+
+After setting up your `.env` file and ensuring your environment variables are correctly defined, you can initialize your Studio Cloud Sync environment with a single command. This step will automatically create the necessary configuration files and folders based on the settings specified in your `.env` file.
+
+### Step 1: Ensure Prerequisites
+
+Before running the initialization command, make sure you have:
+
+- Cloned the Studio Cloud Sync repository to your local machine.
+- Created and configured the `.env` file as described in the previous sections.
+- Installed all necessary dependencies for the Studio Cloud Sync project.
+
+### Step 2: Run the Initialization Command
+
+Open a terminal or command prompt, navigate to the root directory of your Studio Cloud Sync project, and execute the following command:
+
+```bash
+python scs.py -init
+```
+
+This command performs the following actions:
+
+1. **Reads the `.env` File**: The script extracts the environment variables defined in your `.env` file, such as `API_KEY`, `UNIVERSE_ID`, `PLACE_ID`, and the `WHITELIST`.
+
+2. **Generates Configuration**: Based on the extracted values, the script generates the `scs_config.json` file with the appropriate settings for your Roblox universe and place IDs, as well as the version control name whitelist.
+
+3. **Sets Up Folders**: Necessary folders and files for the Studio Cloud Sync environment are created, ensuring your project's directory structure is correctly organized for synchronization.
+
+### Step 3: Verify the Configuration
+
+After running the initialization command, verify the `scs_config.json` file to ensure it contains the correct configurations as per your `.env` settings. The file should look something like this:
+
 ```json
 {
-  "universeId": "5830112232",
-  "placeId": "1618917054",
+  "universeId": "<your_universe_id_here>",
+  "placeId": "<your_place_id_here>",
   "version_control_name_whitelist": ["ServerScriptService", "StarterPlayer", "StarterGui"]
 }
-
 ```
+
+Ensure the `universeId` and `placeId` match the values from your `.env` file, and the `version_control_name_whitelist` reflects the objects you wish to include in version control.
+
+### Step 4: Begin Development
+
+With the configuration successfully generated and your environment set up, you're now ready to begin development. Use Studio Cloud Sync commands to pull, push, and manage your Roblox projects seamlessly between your local environment and the Roblox cloud.
+
+### Conclusion
+
+The `-init` command simplifies the setup process by automatically generating necessary configuration files from your `.env` settings, allowing you to quickly start working on your Roblox projects with Studio Cloud Sync. Remember to keep your `.env` file updated with any changes to your development environment.
+
 The `version_control_name_whitelist` in the `scs_config.json` file is a configuration option that allows you to specify a list of names of objects within Roblox Studio that you want to include in version control. This feature is necessary due to current beta restrictions imposed by the Roblox Engine Open Cloud APIs, which prevent the system from parsing a full workspace.
 
 Explanation:
@@ -44,6 +130,7 @@ To configure Studio Cloud Sync for your project, you should replace the placehol
 Once configured, you can use Studio Cloud Sync with the following command-line arguments:
 
 ```
+python scs.py -init     # Setup files and folders so you can pull
 python scs.py -pull     # Pull and update local .lua files
 python scs.py -push     # Push local changes to the Roblox platform
 python scs.py -monitor  # Monitor local changes and push updates automatically
