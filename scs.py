@@ -21,8 +21,10 @@ UPDATE_INSTANCE_URL = "https://apis.roblox.com/cloud/v2/universes/{}/places/{}/i
 
 # Utility Functions
 def load_config() -> Dict[str, any]:
-    with open(CONFIG_PATH, 'r') as config_file:
-        return json.load(config_file)
+    if os.path.exists(CONFIG_PATH):
+        with open(CONFIG_PATH, 'r') as config_file:
+            return json.load(config_file)
+    return {}
 
 def ensure_directories() -> None:
     if not os.path.exists(LUA_FILES_DIR):
@@ -124,9 +126,29 @@ def monitor_and_save_changes(session: requests.Session, universe_id: str, place_
     except KeyboardInterrupt:
         print("Monitoring interrupted by user. Exiting...")
 
+def default_init():
+    with open(CONFIG_PATH, 'w') as file:
+        json.dump({"universeId": os.getenv('UNIVERSE_ID', 'YOUR ID HERE'),
+        "placeId": os.getenv('PLACE_ID', 'YOUR ID HERE'),
+        "version_control_name_whitelist": os.getenv('WHITELIST', ["ServerScriptService", "StarterPlayer", "StarterGui"])}
+        , file)
+
 # Main Function
 def main() -> None:
-    ensure_directories()
+    parser = argparse.ArgumentParser(description="Roblox Lua Script Manager")
+    parser.add_argument("-pull", help="Pull and update the local .lua files", action="store_true")
+    parser.add_argument("-push", help="Push local changes to the Roblox platform", action="store_true")
+    parser.add_argument("-monitor", help="Monitor local changes and push updates automatically", action="store_true")
+    parser.add_argument("-init", help="Setup the local file environment at the specified directory path", action="store_true")
+
+    args = parser.parse_args()
+
+    if args.init:
+        ensure_directories()
+        default_init()
+        save_instance_mapping({})
+        return
+    
     session = requests.Session()
     config = load_config()
     universe_id, place_id = config.get('universeId', ''), config.get('placeId', '')
@@ -137,18 +159,15 @@ def main() -> None:
         with open(MAP_PATH, 'r') as file:
             instance_mapping = json.load(file)
 
-    parser = argparse.ArgumentParser(description="Roblox Lua Script Manager")
-    parser.add_argument("-pull", help="Pull and update the local .lua files", action="store_true")
-    parser.add_argument("-push", help="Push local changes to the Roblox platform", action="store_true")
-    parser.add_argument("-monitor", help="Monitor local changes and push updates automatically", action="store_true")
-    args = parser.parse_args()
-
     if args.pull:
+        
         list_and_create_scripts(session, universe_id, place_id, instance_mapping, version_control_name_whitelist=version_control_name_whitelist)
         save_instance_mapping(instance_mapping)
     elif args.push:
+
         update_all_instances(session, universe_id, place_id, instance_mapping)
     elif args.monitor:
+
         monitor_and_save_changes(session, universe_id, place_id, instance_mapping, loop=True)
     else:
         parser.print_help()
