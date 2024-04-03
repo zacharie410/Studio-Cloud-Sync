@@ -4,9 +4,9 @@ import os
 import time
 
 # Provided API key and IDs
-apiKey = "hgUDNFHZEkijKKi7tsxJ7ooKVNXTo3qvvkJ94T6Jbnfbqe0q"
-universeId = "5829031272"
-placeId = "16989017041"
+apiKey = "key_deleted"
+universeId = "your_id"
+placeId = "your_id"
 
 # Headers and Endpoints
 apiKeyHeaderKey = "x-api-key"
