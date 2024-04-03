@@ -21,13 +21,10 @@ GET_OPERATION_URL = "https://apis.roblox.com/cloud/v2/{}"
 UPDATE_INSTANCE_URL = "https://apis.roblox.com/cloud/v2/universes/{}/places/{}/instances/{}"
 
 # Define markers for the metadata section
-metadata_start_marker = "--[[METADATA"
-metadata_end_marker = "METADATA]]--"
-
-requestBlock = 0
+METADATA_START_MARKER = "--[[METADATA"
+METADATA_END_MARKER = "METADATA]]--"
 
 # Utility Functions
-
 def ensure_directories() -> None:
     if not os.path.exists(LUA_FILES_DIR):
         os.makedirs(LUA_FILES_DIR)
@@ -36,16 +33,19 @@ def get_operation(session: requests.Session, operation_path: str) -> Dict[str, A
     url = GET_OPERATION_URL.format(operation_path)
 
     response = session.get(url, headers=HEADERS, timeout=1)
+    code = response.status_code
+    if code == 429:
+        print("Too many requests, sleeping for 15 seconds")
+        time.sleep(15)
+        session = requests.Session()
+        return get_operation(session, operation_path)
     response.raise_for_status()
     return response.json()
 
-def poll_for_results(session: requests.Session, operation_path: str, number_of_retries: int = 2, retry_polling_cadence: float = 1) -> Dict[str, Any]:
-    time.sleep(0.25)
+def poll_for_results(session: requests.Session, operation_path: str, number_of_retries: int = 3, retry_polling_cadence: float = 5) -> Dict[str, Any]:
+    time.sleep(5)
     cadence_rate = retry_polling_cadence
     for _ in range(number_of_retries):
-
-
-
         result = get_operation(session, operation_path)
         if result.get("done"):
             return result
@@ -63,9 +63,13 @@ def generate_post_data(instance_type: str, source_code: str) -> str:
 
 # Core Functions
 def list_children(session: requests.Session, universe_id: str, place_id: str, parent_id: str = "root") -> List[Dict[str, Any]]:
-
-    print(parent_id)
     response = session.get(LIST_CHILDREN_URL.format(universe_id, place_id, parent_id), headers=HEADERS, timeout=1)
+    code = response.status_code
+    if code == 429:
+        print("Too many requests, sleeping for 15 seconds")
+        time.sleep(15)
+        session = requests.Session()
+        return list_children(session, universe_id, place_id, parent_id)
     response.raise_for_status()
     operation_path = response.json()['path']
     result = poll_for_results(session, operation_path)
@@ -101,12 +105,12 @@ def extract_metadata(file_path: str) -> str:
         content = file.read()
     
     # Find the metadata section
-    metadata_start_index = content.find(metadata_start_marker)
-    metadata_end_index = content.find(metadata_end_marker, metadata_start_index)
+    metadata_start_index = content.find(METADATA_START_MARKER)
+    metadata_end_index = content.find(METADATA_END_MARKER, metadata_start_index)
     
     if metadata_start_index != -1 and metadata_end_index != -1:
         # Extract the metadata section
-        metadata_section = content[metadata_start_index:metadata_end_index + len(metadata_end_marker)]
+        metadata_section = content[metadata_start_index:metadata_end_index + len(METADATA_END_MARKER)]
         
         # Search for the instanceId within the metadata section
         match = instance_id_pattern.search(metadata_section)
@@ -122,19 +126,19 @@ def extract_metadata(file_path: str) -> str:
 def update_metadata(file_path:str, instance_id: str, instance_type: str) -> str:
     # Format the new metadata section
 
-    new_metadata = f"""{metadata_start_marker}
+    new_metadata = f"""{METADATA_START_MARKER}
         instanceId: {instance_id}
         instanceType: {instance_type}
-        {metadata_end_marker}
+        {METADATA_END_MARKER}
     """
     # Read the existing file content
     with open(file_path, 'r', encoding='utf-8') as file:
         content = file.read()
 
     # Split the content at the metadata section
-    parts = content.split(metadata_start_marker, 1)
+    parts = content.split(METADATA_START_MARKER, 1)
     pre_metadata = parts[0]
-    post_metadata = parts[1].split(metadata_end_marker, 1)[1] if len(parts) > 1 else ""
+    post_metadata = parts[1].split(METADATA_END_MARKER, 1)[1] if len(parts) > 1 else ""
 
     # Combine the new metadata with the main content
     updated_content = pre_metadata + new_metadata + post_metadata
@@ -180,7 +184,6 @@ def list_and_create_scripts(session, universeId, placeId, parent_id="root", pare
 def update_all_instances(session: requests.Session, universe_id: str, place_id: str) -> None:
         files = [f for f in os.listdir(LUA_FILES_DIR) if os.path.isfile(os.path.join(LUA_FILES_DIR, f))]
         for file in files:
-            time.sleep(0.1)
             file_path = os.path.join(LUA_FILES_DIR, file)
             with open(file_path, 'r', encoding='utf-8') as file:
                 source_code = file.read()
