@@ -1,6 +1,1 @@
 .env
-ScriptExplorer/
-*.json
-.lua
-scs_config.json
-scs_instance_map.json
