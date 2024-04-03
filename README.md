@@ -2,6 +2,8 @@
 
 Studio Cloud Sync is a Python script designed to simplify the management of .lua files from Roblox Studio within your local environment using the Roblox Engine Open Cloud APIs. With Studio Cloud Sync, developers can seamlessly synchronize their local workspace with the cloud, enabling efficient version control and collaboration on Roblox experiences.
 
+![Example Screenshot](/images/example.png)
+
 ## Getting Started
 
 ### Prerequisites
