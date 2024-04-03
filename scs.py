@@ -4,13 +4,14 @@ import os
 import requests
 import time
 from dotenv import load_dotenv
-from typing import Dict, List
+from typing import Dict, List, Any
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
+import re
 
 # Load environment and configurations
 load_dotenv()
-CONFIG_PATH = 'scs_config.json'
 LUA_FILES_DIR = "ScriptExplorer"
-MAP_PATH = "./scs_instance_map.json"
 API_KEY = os.getenv('API_KEY', '')
 HEADERS = {"x-api-key": API_KEY, "Content-type": "application/json"}
 
@@ -19,31 +20,38 @@ LIST_CHILDREN_URL = "https://apis.roblox.com/cloud/v2/universes/{}/places/{}/ins
 GET_OPERATION_URL = "https://apis.roblox.com/cloud/v2/{}"
 UPDATE_INSTANCE_URL = "https://apis.roblox.com/cloud/v2/universes/{}/places/{}/instances/{}"
 
+# Define markers for the metadata section
+metadata_start_marker = "--[[METADATA"
+metadata_end_marker = "METADATA]]--"
+
+requestBlock = 0
+
 # Utility Functions
-def load_config() -> Dict[str, any]:
-    if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, 'r') as config_file:
-            return json.load(config_file)
-    return {}
 
 def ensure_directories() -> None:
     if not os.path.exists(LUA_FILES_DIR):
         os.makedirs(LUA_FILES_DIR)
 
-def get_operation(session: requests.Session, operation_path: str) -> Dict[str, any]:
+def get_operation(session: requests.Session, operation_path: str) -> Dict[str, Any]:
     url = GET_OPERATION_URL.format(operation_path)
-    response = session.get(url, headers=HEADERS)
+
+    response = session.get(url, headers=HEADERS, timeout=1)
     response.raise_for_status()
     return response.json()
 
-def poll_for_results(session: requests.Session, operation_path: str, number_of_retries: int = 10, retry_polling_cadence: float = 0.2) -> Dict[str, any]:
+def poll_for_results(session: requests.Session, operation_path: str, number_of_retries: int = 2, retry_polling_cadence: float = 1) -> Dict[str, Any]:
+    time.sleep(0.25)
     cadence_rate = retry_polling_cadence
     for _ in range(number_of_retries):
-        time.sleep(cadence_rate)
-        cadence_rate*=2 # basically the delay doubles at each try, so try a few in quick succession then wait longer
+
+
+
         result = get_operation(session, operation_path)
         if result.get("done"):
             return result
+        time.sleep(cadence_rate)
+        cadence_rate*=2 # basically the delay doubles at each try, so try a few in quick succession then wait longer
+
     raise TimeoutError("Polling for results timed out.")
 
 def generate_post_data(instance_type: str, source_code: str) -> str:
@@ -54,64 +62,140 @@ def generate_post_data(instance_type: str, source_code: str) -> str:
     })
 
 # Core Functions
-def list_children(session: requests.Session, universe_id: str, place_id: str, parent_id: str = "root") -> List[Dict[str, any]]:
-    response = session.get(LIST_CHILDREN_URL.format(universe_id, place_id, parent_id), headers=HEADERS)
+def list_children(session: requests.Session, universe_id: str, place_id: str, parent_id: str = "root") -> List[Dict[str, Any]]:
+
+    print(parent_id)
+    response = session.get(LIST_CHILDREN_URL.format(universe_id, place_id, parent_id), headers=HEADERS, timeout=1)
     response.raise_for_status()
     operation_path = response.json()['path']
     result = poll_for_results(session, operation_path)
     return result['response']['instances']
 
-def update_instance(session: requests.Session, universe_id: str, place_id: str, instance_id: str, post_data: str) -> Dict[str, any]:
-    url = UPDATE_INSTANCE_URL.format(universe_id, place_id, instance_id)
-    response = session.patch(url, headers=HEADERS, data=post_data)
-    response.raise_for_status()
-    return response.json()
+def update_instance(session: requests.Session, universe_id: str, place_id: str, instance_id: str, post_data: str, number_of_retries: int = 3, retry_polling_cadence: float = 0.2) -> Dict[str, Any]:
+        cadence_rate = retry_polling_cadence
+        url = UPDATE_INSTANCE_URL.format(universe_id, place_id, instance_id)
+        for _ in range(number_of_retries):
+            time.sleep(cadence_rate)
+            cadence_rate*=2
+            try:
+
+                response = session.patch(url, headers=HEADERS, data=post_data)
+                response.raise_for_status()
+                return response.json()
+            except:
+                print("Save failed, trying again . . .")
 
 
-def list_and_create_scripts(session, universeId, placeId, instance_mapping, parent_id="root", parent_name="root", version_control_name_whitelist=[]):
-    children = list_children(session, universeId, placeId, parent_id)
-    for child in children:
-        is_container = child.get("hasChildren", False)
-        instance = child.get("engineInstance", {})
-        instance_details = instance.get("Details", {})
-        instance_type_name, instance_type = next(((k, v) for k, v in instance_details.items() if k in ["Script", "LocalScript", "ModuleScript"]), (None, None))
-        if instance_type:
-            instance_id = instance.get("Id", "")
-            instance_name = instance.get("Name", "")
-            file_name = f"{parent_name}_{instance_name}-{instance_type_name}_{instance_id}.lua"
-            file_path = os.path.join(LUA_FILES_DIR, file_name)
-            with open(file_path, 'w', encoding='utf-8') as file:
-                file.write(instance_type.get("Source", ""))
-            print(f"Update {file_name} in {LUA_FILES_DIR}")
-            instance_mapping[instance_id] = {
-                "name": instance_name,
-                "type": instance_type_name,
-                "file_path": file_path
-            }
+def extract_metadata(file_path: str) -> str:
+    
+    # Compile a regular expression to find the instanceId line
+    instance_id_pattern = re.compile(r'\binstanceId:\s*(\S+)')
+    # Compile a regular expression to find the instanceType line
+    instance_type_pattern = re.compile(r'\binstanceType:\s*(\S+)')
 
-        if is_container and (instance_type and instance_type.get("Folder") or instance.get("Name", "") in version_control_name_whitelist):
-            list_and_create_scripts(session, universeId, placeId, instance_mapping, parent_id=instance.get("Id", ""), parent_name=instance.get("Name", ""), version_control_name_whitelist=version_control_name_whitelist)
+    # Initialize variables
+    instance_id = None
+    instance_type = None
+    # Read the file content
+    with open(file_path, 'r', encoding='utf-8') as file:
+        content = file.read()
+    
+    # Find the metadata section
+    metadata_start_index = content.find(metadata_start_marker)
+    metadata_end_index = content.find(metadata_end_marker, metadata_start_index)
+    
+    if metadata_start_index != -1 and metadata_end_index != -1:
+        # Extract the metadata section
+        metadata_section = content[metadata_start_index:metadata_end_index + len(metadata_end_marker)]
+        
+        # Search for the instanceId within the metadata section
+        match = instance_id_pattern.search(metadata_section)
+        if match:
+            instance_id = match.group(1)  # The first capturing group contains the instanceId
+         # Search for the instanceType within the metadata section
+        match = instance_type_pattern.search(metadata_section)
+        if match:
+            instance_type = match.group(1)  # The first capturing group contains the instanceId
+    
+    return instance_id, instance_type
 
-def save_instance_mapping(instance_mapping: Dict[str, Dict[str, str]]) -> None:
-    with open(MAP_PATH, 'w') as file:
-        json.dump(instance_mapping, file)
+def update_metadata(file_path:str, instance_id: str, instance_type: str) -> str:
+    # Format the new metadata section
 
-def update_all_instances(session: requests.Session, universe_id: str, place_id: str, instance_mapping: Dict[str, Dict[str, str]]) -> None:
-    for instance_id, details in instance_mapping.items():
-        file_path = details['file_path']
-        instance_type = details['type']
-        with open(file_path, 'r', encoding='utf-8') as file:
-            source_code = file.read()
-        post_data = generate_post_data(instance_type, source_code)
-        result = update_instance(session, universe_id, place_id, instance_id, post_data)
-        print(f"Updated {file_path} with result {result}")
+    new_metadata = f"""{metadata_start_marker}
+        instanceId: {instance_id}
+        instanceType: {instance_type}
+        {metadata_end_marker}
+    """
+    # Read the existing file content
+    with open(file_path, 'r', encoding='utf-8') as file:
+        content = file.read()
 
-def monitor_and_save_changes(session: requests.Session, universe_id: str, place_id: str, instance_mapping: Dict[str, Dict[str, any]], 
+    # Split the content at the metadata section
+    parts = content.split(metadata_start_marker, 1)
+    pre_metadata = parts[0]
+    post_metadata = parts[1].split(metadata_end_marker, 1)[1] if len(parts) > 1 else ""
+
+    # Combine the new metadata with the main content
+    updated_content = pre_metadata + new_metadata + post_metadata
+
+    # Write the updated content back to the file
+    with open(file_path, 'w', encoding='utf-8') as file:
+        file.write(updated_content)
+
+def list_and_create_scripts(session, universeId, placeId, parent_id="root", parent_name="root"):
+    try:
+        children = list_children(session, universeId, placeId, parent_id)
+        tasks = []
+        for child in children:
+            is_container = child.get("hasChildren", False)
+            instance = child.get("engineInstance", {})
+            instance_details = instance.get("Details", {})
+            instance_type_name, instance_type = next(((k, v) for k, v in instance_details.items() if k in ["Script", "LocalScript", "ModuleScript"]), (None, None))
+            if instance_type:
+                instance_id = instance.get("Id", "")
+                instance_name = instance.get("Name", "")
+                file_name = f"{parent_name}_{instance_name}-{instance_type_name}.luau"
+                file_path = os.path.join(LUA_FILES_DIR, file_name)
+
+                with open(file_path, 'w', encoding='utf-8') as file:
+                    file.write(instance_type.get("Source", ""))
+
+                update_metadata(file_path, instance_id, instance_type_name)
+
+                print(f"Pulled {file_name} in {LUA_FILES_DIR}")
+
+            if is_container:
+                tasks.append(partial(list_and_create_scripts, session, universeId, placeId,
+                         parent_id=instance.get("Id", ""),
+                         parent_name=instance.get("Name", ""),
+                         ))
+
+        with ThreadPoolExecutor() as executor:
+            for task_with_args in tasks:
+                executor.submit(task_with_args)
+    except Exception as e:
+        print(e)
+
+def update_all_instances(session: requests.Session, universe_id: str, place_id: str) -> None:
+        files = [f for f in os.listdir(LUA_FILES_DIR) if os.path.isfile(os.path.join(LUA_FILES_DIR, f))]
+        for file in files:
+            time.sleep(0.1)
+            file_path = os.path.join(LUA_FILES_DIR, file)
+            with open(file_path, 'r', encoding='utf-8') as file:
+                source_code = file.read()
+            file_id, file_type = extract_metadata(file_path)
+            post_data = generate_post_data(file_type, source_code)
+            print(post_data)
+            result = update_instance(session, universe_id, place_id, file_id, post_data)
+            print(f"Updated {file_path} with result {result}")
+
+def monitor_and_save_changes(session: requests.Session, universe_id: str, place_id: str, 
                              loop: bool = True, timer: int = 3) -> None:
     try:
         print("Monitoring changes... Press CTRL+C to exit.")
         while True:
-            for instance_id, details in instance_mapping.items():
+            for instance_id, details in {}.items():
                 file_path = details['file_path']
                 if os.path.getmtime(file_path) > details.get('last_modified', 0):
                     with open(file_path, 'r', encoding='utf-8') as file:
@@ -126,13 +210,6 @@ def monitor_and_save_changes(session: requests.Session, universe_id: str, place_
     except KeyboardInterrupt:
         print("Monitoring interrupted by user. Exiting...")
 
-def default_init():
-    with open(CONFIG_PATH, 'w') as file:
-        json.dump({"universeId": os.getenv('UNIVERSE_ID', 'YOUR ID HERE'),
-        "placeId": os.getenv('PLACE_ID', 'YOUR ID HERE'),
-        "version_control_name_whitelist": os.getenv('WHITELIST', ["ServerScriptService", "StarterPlayer", "StarterGui"])}
-        , file)
-
 # Main Function
 def main() -> None:
     parser = argparse.ArgumentParser(description="Roblox Lua Script Manager")
@@ -145,30 +222,20 @@ def main() -> None:
 
     if args.init:
         ensure_directories()
-        default_init()
-        save_instance_mapping({})
         return
     
     session = requests.Session()
-    config = load_config()
-    universe_id, place_id = config.get('universeId', ''), config.get('placeId', '')
-    version_control_name_whitelist = config.get('version_control_name_whitelist', [])
-    instance_mapping = {}
-
-    if os.path.exists(MAP_PATH):
-        with open(MAP_PATH, 'r') as file:
-            instance_mapping = json.load(file)
+    universe_id, place_id = os.getenv('UNIVERSE_ID', ''), os.getenv('PLACE_ID', '')
 
     if args.pull:
         
-        list_and_create_scripts(session, universe_id, place_id, instance_mapping, version_control_name_whitelist=version_control_name_whitelist)
-        save_instance_mapping(instance_mapping)
+        list_and_create_scripts(session, universe_id, place_id)
     elif args.push:
 
-        update_all_instances(session, universe_id, place_id, instance_mapping)
+        update_all_instances(session, universe_id, place_id)
     elif args.monitor:
 
-        monitor_and_save_changes(session, universe_id, place_id, instance_mapping, loop=True)
+        monitor_and_save_changes(session, universe_id, place_id, loop=True)
     else:
         parser.print_help()
 
